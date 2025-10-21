@@ -8,11 +8,24 @@
       font-family: "Segoe UI", sans-serif;
       background: #eef4ff;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100vh;
       margin: 0;
     }
+
+    #revisionBanner {
+      display: none;
+      background: #ff8c00;
+      color: white;
+      padding: 8px 20px;
+      border-radius: 10px;
+      font-weight: bold;
+      box-shadow: 0 2px 8px rgba(255, 140, 0, 0.4);
+      margin-bottom: 10px;
+    }
+
     .card {
       background: white;
       border-radius: 16px;
@@ -20,21 +33,31 @@
       box-shadow: 0 4px 15px rgba(0,0,0,0.2);
       text-align: center;
       width: 360px;
+      border: 3px solid transparent;
+      transition: border 0.3s, box-shadow 0.3s;
     }
+    #correctPage.card {
+      width: 650px !important; /* wider only for the correct page */
+    }
+
     h1 { font-size: 1.3em; margin-bottom: 10px; }
+
     input[type="text"] {
       width: 80%;
       padding: 8px;
       font-size: 1em;
       margin-top: 10px;
     }
+
     .numbers {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 8px;
       margin-top: 10px;
     }
+
     label { font-size: 0.9em; }
+
     button {
       background: #006aff;
       color: white;
@@ -45,21 +68,63 @@
       cursor: pointer;
       margin-top: 15px;
     }
+
     button:hover { background: #004fcc; }
+
     #feedback { margin-top: 10px; font-weight: bold; }
-    #correctPage { display: none; text-align: left; }
-    .list-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #f2f5ff;
-      padding: 6px 10px;
-      margin: 4px 0;
-      border-radius: 6px;
+
+    /* Correct answers grid */
+    #correctList {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr   );
+      gap: 10px;
+      margin-top: 10px;
     }
+
+    .list-item {
+      background: #f2f5ff;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 0.95em;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .list-item button {
+      background: #ff6b6b;
+      font-size: 0.8em;
+      padding: 4px 8px;
+      margin-top: 4px;
+    }
+
+    #wrongList .list-item {
+      background: #fff0e0;
+    }
+
+    /* Revision mode visuals */
+    .revision .card {
+      border: 3px solid #ff8c00;
+      box-shadow: 0 4px 20px rgba(255, 140, 0, 0.4);
+    }
+
+    .revision button {
+      background: #ff8c00;
+    }
+
+    .revision button:hover {
+      background: #e07800;
+    }
+      #correctPage,
+  #summaryPage {
+    display: none;
+  }
   </style>
 </head>
 <body>
+  <div id="revisionBanner">🔸 Revision Mode</div>
+
   <!-- MAIN QUIZ -->
   <div class="card" id="quizPage">
     <h1 id="question">Loading...</h1>
@@ -78,10 +143,15 @@
     <button id="back">Back to Quiz</button>
   </div>
 
+  <!-- SUMMARY PAGE -->
+  <div class="card" id="summaryPage">
+    <h1>Revision Summary</h1>
+    <p id="summaryText"></p>
+    <div id="wrongList"></div>
+    <button id="backToCorrect">Back to Correct List</button>
+  </div>
+
   <script>
-    /* -----------------------------
-       ELEMENTS DATABASE
-    ------------------------------ */
     const elements = [
       // --- Alkali Metals (+1) ---
       { name: "Lithium", symbol: "Li", ox: [+1] },
@@ -146,35 +216,32 @@
       { name: "Radon", symbol: "Rn", ox: [0] }
     ];
 
-    /* -----------------------------
-       MEMORY & STATE
-    ------------------------------ */
     let correctList = JSON.parse(localStorage.getItem("correctList") || "[]");
     let streaks = JSON.parse(localStorage.getItem("streaks") || "{}");
     let revisionMode = false;
     let revisionQueue = [];
+    let wrongRevision = [];
+    let current, askSymbol;
+
+    const quizPage = document.getElementById("quizPage");
+    const correctPage = document.getElementById("correctPage");
+    const summaryPage = document.getElementById("summaryPage");
+    const revisionBanner = document.getElementById("revisionBanner");
 
     function saveProgress() {
       localStorage.setItem("correctList", JSON.stringify(correctList));
       localStorage.setItem("streaks", JSON.stringify(streaks));
     }
 
-    /* -----------------------------
-       QUIZ LOGIC
-    ------------------------------ */
-    let current;
-    let askSymbol = true;
-
     function newQuestion() {
       document.getElementById("feedback").textContent = "";
-
       let pool;
       if (revisionMode) {
         pool = revisionQueue.length ? revisionQueue : correctList;
         pool = elements.filter(e => pool.includes(e.symbol));
       } else {
         pool = elements.filter(e => !correctList.includes(e.symbol));
-        if (pool.length === 0) pool = elements; // fallback if all learned
+        if (pool.length === 0) pool = elements;
       }
 
       current = pool[Math.floor(Math.random() * pool.length)];
@@ -183,13 +250,10 @@
       const numDiv = document.querySelector(".numbers");
       numDiv.innerHTML = "";
       for (let i = -3; i <= 7; i++) {
-        const id = `ox${i}`;
         const cb = document.createElement("input");
         cb.type = "checkbox";
-        cb.id = id;
         cb.value = i;
         const label = document.createElement("label");
-        label.htmlFor = id;
         label.textContent = (i > 0 ? "+" + i : i);
         const wrap = document.createElement("div");
         wrap.appendChild(cb);
@@ -237,9 +301,9 @@
       } else {
         feedback.innerHTML = `❌ Incorrect.<br>${current.symbol} = ${current.name}<br>Oxidation: ${current.ox.map(n => n>0? "+"+n:n).join(", ")}`;
         feedback.style.color = "red";
+        wrongRevision.push(current.symbol);
 
         if (revisionMode) {
-          // Remove from correct list when revising
           correctList = correctList.filter(s => s !== current.symbol);
         } else {
           streaks[current.symbol] = 0;
@@ -248,29 +312,16 @@
 
       saveProgress();
 
-      // If in revision mode and queue empties, exit
       if (revisionMode) {
         revisionQueue = revisionQueue.filter(sym => sym !== current.symbol);
         if (revisionQueue.length === 0) {
-          feedback.textContent += " 🎯 Revision complete!";
-          setTimeout(() => {
-            revisionMode = false;
-            document.getElementById("correctPage").style.display = "block";
-            document.getElementById("quizPage").style.display = "none";
-          }, 2000);
-          saveProgress();
+          setTimeout(showSummary, 2000);
           return;
         }
       }
 
       setTimeout(newQuestion, 2000);
     });
-
-    /* -----------------------------
-       CORRECT ANSWERS PAGE
-    ------------------------------ */
-    const quizPage = document.getElementById("quizPage");
-    const correctPage = document.getElementById("correctPage");
 
     document.getElementById("viewCorrect").onclick = () => {
       quizPage.style.display = "none";
@@ -279,10 +330,15 @@
     };
 
     document.getElementById("back").onclick = () => {
-      correctPage.style.display = "none";
-      quizPage.style.display = "block";
-      newQuestion();
+        revisionMode = false; // ✅ ensure reset
+        document.body.classList.remove("revision");
+        revisionBanner.style.display = "none";
+        summaryPage.style.display = "none";
+        correctPage.style.display = "none";
+        quizPage.style.display = "block";
+        newQuestion();
     };
+
 
     function renderCorrectList() {
       const list = document.getElementById("correctList");
@@ -292,7 +348,7 @@
         if (!el) return;
         const div = document.createElement("div");
         div.className = "list-item";
-        div.innerHTML = `<span>${el.symbol} = ${el.name}</span>
+        div.innerHTML = `<span><b>${el.symbol}</b><br>${el.name}</span>
         <button data-sym="${el.symbol}" class="remove">Remove</button>`;
         list.appendChild(div);
       });
@@ -306,16 +362,55 @@
       });
     }
 
-    /* -----------------------------
-       REVISION MODE USING SAME UI
-    ------------------------------ */
     document.getElementById("revise").onclick = () => {
       if (correctList.length === 0) return alert("No correct items to revise!");
       revisionMode = true;
+      wrongRevision = [];
       revisionQueue = [...correctList];
       correctPage.style.display = "none";
       quizPage.style.display = "block";
+      document.body.classList.add("revision");
+      revisionBanner.style.display = "block";
       newQuestion();
+    };
+
+    function showSummary() {
+    quizPage.style.display = "none";
+    summaryPage.style.display = "block";
+    correctPage.style.display = "none";
+    document.body.classList.remove("revision");
+    revisionBanner.style.display = "none";
+    revisionMode = false; // ✅ reset mode
+
+    const list = document.getElementById("wrongList");
+    list.innerHTML = "";
+    document.getElementById("summaryText").textContent =
+        `You missed ${wrongRevision.length} out of ${correctList.length + wrongRevision.length} elements.`;
+
+    wrongRevision.forEach(sym => {
+        const el = elements.find(e => e.symbol === sym);
+        const div = document.createElement("div");
+        div.className = "list-item";
+        div.innerHTML = `<span>${el.symbol} = ${el.name}</span>
+        <button data-sym="${el.symbol}" class="remove">Remove from Correct</button>`;
+        list.appendChild(div);
+    });
+
+    document.querySelectorAll("#wrongList .remove").forEach(btn => {
+        btn.onclick = e => {
+        const sym = e.target.dataset.sym;
+        correctList = correctList.filter(s => s !== sym);
+        saveProgress();
+        e.target.parentElement.remove();
+        };
+    });
+    }
+
+
+    document.getElementById("backToCorrect").onclick = () => {
+      summaryPage.style.display = "none";
+      correctPage.style.display = "block";
+      renderCorrectList();
     };
 
     newQuestion();
