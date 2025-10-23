@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Random Inorganic Compound Quiz</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  body { font-family: "Segoe UI", sans-serif; background:#eef4ff; display:flex; flex-direction:column; align-items:center; padding:20px; margin:0;}
+  .card { background:white; border-radius:14px; padding:18px 22px; box-shadow:0 6px 18px rgba(0,0,0,0.12); width:820px; max-width:96%; margin:10px 0;}
+  h1 { margin:0 0 8px 0; font-size:1.15rem;}
+  .small { color:#444; font-size:0.92rem;}
+  #controls { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:10px; flex-wrap:wrap;}
+  .toggles { display:flex; gap:8px; flex-wrap:wrap; }
+  .toggle { background:#f6f9ff; padding:6px 8px; border-radius:8px; display:flex; gap:6px; align-items:center;}
+  .switch { width:36px; height:20px; background:#ccc; border-radius:12px; position:relative; cursor:pointer; }
+  .switch.on { background:#006aff; } .switch .knob { position:absolute; width:16px; height:16px; top:2px; left:2px; background:#fff; border-radius:50%; transition:left .12s; }
+  .switch.on .knob { left:18px; }
+  #questionRow { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:14px;}
+  #question { flex:1; text-align:left; font-weight:600; }
+  #input-area { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;}
+  input[type="text"]{ padding:8px 10px; width:320px; border-radius:8px; border:1px solid #ddd; font-size:1rem;}
+  button { background:#006aff; color:#fff; border:none; border-radius:8px; padding:8px 12px; cursor:pointer; font-size:0.95rem;}
+  button.secondary { background:#fff; color:#333; border:1px solid #ddd; }
+  #feedback { margin-top:10px; min-height:26px; font-weight:700;}
+  .accuracy { display:flex; gap:10px; align-items:center; background:#f8fbff; padding:6px 8px; border-radius:8px; }
+  .progressBar { width:160px; height:10px; background:#e6eefc; border-radius:6px; overflow:hidden; }
+  .progressBar > i { display:block; height:100%; width:0%; background:#006aff; transition:width .25s;}
+  .settings { margin-top:10px; font-size:0.9rem; color:#444; }
+  .small-note { font-size:0.85rem; color:#666; margin-top:8px; text-align:left;}
+  @media (max-width:700px){ input[type="text"]{ width:100%; } .card{padding:12px;} }
+</style>
+</head>
+<body>
+  <div class="card" id="mainCard">
+    <h1>Random Inorganic Compound Quiz</h1>
+    <p class="small">Randomly generates realistic compounds from enabled categories. Convert between formula ↔ common names.</p>
+
+    <div id="controls">
+      <div class="toggles" id="categoryToggles"></div>
+
+      <div style="display:flex;gap:10px;align-items:center">
+        <div class="accuracy" title="Accuracy over last 25 answers">
+          <span id="accuracyPercent">—%</span>
+          <div class="progressBar"><i id="accuracyBar"></i></div>
+        </div>
+        <button id="newQBtn" title="New question">New Question</button>
+      </div>
+    </div>
+
+    <div id="questionRow">
+      <div id="question">Press "New Question" to start</div>
+      <div>
+        <label style="font-size:0.9rem;">Direction</label><br>
+        <select id="direction">
+          <option value="formulaToName">Formula → Name</option>
+          <option value="nameToFormula">Name → Formula</option>
+          <option value="either">Either</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="input-area">
+      <input id="answer" type="text" placeholder="Type your answer (e.g. Na2O or sodium oxide)" autocomplete="off" />
+      <button id="submit">Submit</button>
+      <button id="hintBtn" class="secondary">Hint</button>
+      <button id="resetStats" class="secondary">Reset accuracy</button>
+    </div>
+
+    <div id="feedback" aria-live="polite"></div>
+    <div class="small-note">Answers are normalized (case/whitespace). For salts and oxyanions common names like "sulfate"/"sulfite" and roman numerals (Fe(III)) are accepted in common variants.</div>
+  </div>
+
+<script>
+/* ---------------------------
+   Data: elements & oxidation states
+   --------------------------- */
+const ELEMENTS = {
+  // metals with typical oxidation states (positive)
+  "Na": { name:"Sodium", ox: [1] },
+  "K": { name:"Potassium", ox: [1] },
+  "Li": { name:"Lithium", ox: [1] },
+  "Ca": { name:"Calcium", ox: [2] },
+  "Mg": { name:"Magnesium", ox: [2] },
+  "Al": { name:"Aluminium", ox: [3] },
+  "Fe": { name:"Iron", ox: [2,3] },
+  "Cu": { name:"Copper", ox: [1,2] },
+  "Zn": { name:"Zinc", ox: [2] },
+  "Ag": { name:"Silver", ox: [1] },
+  "Ba": { name:"Barium", ox: [2] },
+
+  // nonmetals (can have negative or positive ox states)
+  "H": { name:"Hydrogen", ox: [-1,1] },
+  "O": { name:"Oxygen", ox: [-2] },
+  "C": { name:"Carbon", ox: [-4,2,4] },
+  "N": { name:"Nitrogen", ox: [-3,1,2,3,4,5] },
+  "P": { name:"Phosphorus", ox: [-3,3,5] },
+  "S": { name:"Sulfur", ox: [-2,2,4,6] },
+  "Cl": { name:"Chlorine", ox: [-1,1,3,5,7] },
+  "Br": { name:"Bromine", ox: [-1,1,3,5,7] },
+  "I": { name:"Iodine", ox: [-1,1,5,7] }
+};
+
+/* categories and which elements are allowed for generation in each */
+const CATEGORY_DEFS = {
+  "metallic hydrides": { label:"Metallic hydrides", kind:"metal" },
+  "metallic oxides": { label:"Metallic oxides", kind:"metal" },
+  "non-metallic oxides": { label:"Non-metallic oxides", kind:"nonmetal_pos" },
+  "non-metallic hydrides": { label:"Non-metallic hydrides", kind:"nonmetal_neg" },
+  "non-oxygen acids": { label:"Non-oxygen acids (binary acids)", kind:"binary_acid" },
+  "oxyacids": { label:"Oxyacids", kind:"oxyacid" },
+  "hydroxides": { label:"Hydroxides", kind:"metal" },
+  "salts": { label:"Binary salts (M + X)", kind:"salt" },
+  "ternary salts": { label:"Ternary salts (M + oxyanion)", kind:"ternary" }
+};
+
+/* useful lists */
+const METALS = Object.keys(ELEMENTS).filter(s => {
+  // treat as metal if all oxidation states are positive and element not H,O,C,N,P,S,Cl...
+  return ["Na","K","Li","Ca","Mg","Al","Fe","Cu","Zn","Ag","Ba"].includes(s);
+});
+const NONMETALS = Object.keys(ELEMENTS).filter(s => !METALS.includes(s));
+const NONMETALS_POS = NONMETALS.filter(e => ELEMENTS[e].ox.some(x => x>0));
+const NONMETALS_NEG = NONMETALS.filter(e => ELEMENTS[e].ox.some(x => x<0));
+const HALIDES = ["Cl","Br","I"]; // for binary acids examples
+
+/* naming helpers: roots for common oxyacids and oxyanions */
+const ACID_ROOT = {
+  "N":"nitro", "P":"phospho", "S":"sulfur", "C":"carbon", "Cl":"chlor", "Br":"brom", "I":"iod"
+};
+const ELEMENT_NAME = Object.fromEntries(Object.entries(ELEMENTS).map(([k,v])=>[k, v.name]));
+
+/* localStorage keys */
+const LS = {
+  enabledCats: "compoundQuiz.enabledCategories.v1",
+  stats: "compoundQuiz.stats.v1"
+};
+
+/* ---------- persistence & accuracy stat (last 25) ---------- */
+let stats = JSON.parse(localStorage.getItem(LS.stats) || "[]"); // array of booleans recent->old
+function recordResult(correct){
+  stats.unshift(Boolean(correct));
+  if(stats.length>25) stats = stats.slice(0,25);
+  localStorage.setItem(LS.stats, JSON.stringify(stats));
+  updateAccuracyDisplay();
+}
+function resetStats(){
+  stats = [];
+  localStorage.setItem(LS.stats, JSON.stringify(stats));
+  updateAccuracyDisplay();
+}
+function updateAccuracyDisplay(){
+  const elP = document.getElementById("accuracyPercent");
+  const bar = document.getElementById("accuracyBar");
+  if(stats.length===0){
+    elP.textContent = "—%";
+    bar.style.width = "0%";
+    return;
+  }
+  const perc = Math.round((stats.filter(Boolean).length / stats.length)*100);
+  elP.textContent = `${perc}%`;
+  bar.style.width = `${perc}%`;
+}
+
+/* ---------- category toggle UI ---------- */
+let enabledCats = JSON.parse(localStorage.getItem(LS.enabledCats) || "null");
+if(!enabledCats){
+  enabledCats = Object.keys(CATEGORY_DEFS).reduce((o,k)=> (o[k]=true,o), {});
+  localStorage.setItem(LS.enabledCats, JSON.stringify(enabledCats));
+}
+const togglesDiv = document.getElementById("categoryToggles");
+function renderToggles(){
+  togglesDiv.innerHTML = "";
+  Object.keys(CATEGORY_DEFS).forEach(cat=>{
+    const t = document.createElement("div"); t.className="toggle";
+    const s = document.createElement("div"); s.className="switch " + (enabledCats[cat] ? "on" : "");
+    s.innerHTML = '<div class="knob"></div>';
+    s.onclick = ()=> { enabledCats[cat]=!enabledCats[cat]; localStorage.setItem(LS.enabledCats, JSON.stringify(enabledCats)); renderToggles(); };
+    const l = document.createElement("div"); l.textContent = CATEGORY_DEFS[cat].label;
+    t.appendChild(s); t.appendChild(l); togglesDiv.appendChild(t);
+  });
+}
+renderToggles();
+
+/* ---------- utility functions ---------- */
+function gcd(a,b){ if(!b) return a; return gcd(b, a%b); }
+function lcm(a,b){ return Math.abs(a*b)/gcd(a,b); }
+function normalizeName(s){
+  return s.trim().toLowerCase().replace(/\s+/g," ").replace(/[\u0300-\u036f]/g, "");
+}
+function formatFormula(parts){
+  // parts is array of [symbol, count]
+  return parts.map(([sym,c]) => sym + (c>1 ? c : "")).join("");
+}
+
+/* ---------- balancing helpers ---------- */
+function smallestRatio(a,b){
+  // returns [multiplier for first, multiplier for second] such that a*mult1 + b*mult2 = 0 (a,b signed integers)
+  // Here used for charges: a = charge1, b = -charge2 (opposite sign)
+  const A = Math.abs(a), B = Math.abs(b);
+  const g = gcd(A,B);
+  return [B/g, A/g]; // e.g. +2 and -1 -> [1,2] => M1X2
+}
+
+/* ---------- generation functions for each category ---------- */
+
+/* 1) Metallic hydrides: M + H(-1): M H_z where z = metal oxidation */
+function gen_metallic_hydride(){
+  const metal = METALS[Math.floor(Math.random()*METALS.length)];
+  const ox = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)]; // positive
+  const subs = ox; // number of H to neutralize (H -1 each)
+  const formula = formatFormula([[metal,1],["H",subs]]);
+  const name = `${ELEMENT_NAME[metal].toLowerCase()} hydride`;
+  return { formula, name, category:"metallic hydrides" };
+}
+
+/* 2) Metallic oxides: M^(+z) + O(-2) => Mx Oy */
+function gen_metallic_oxide(){
+  const metal = METALS[Math.floor(Math.random()*METALS.length)];
+  const ox = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)];
+  const [multM,multO] = smallestRatio(ox, -2);
+  const formula = formatFormula([[metal,multM],["O",multO]]);
+  // add roman numeral if metal has multiple common ox states
+  const metalName = ELEMENT_NAME[metal];
+  const name = (ELEMENTS[metal].ox.length>1) ? `${metalName}(${toRoman(ox)}) oxide` : `${metalName} oxide`;
+  return { formula, name: name.toLowerCase(), category:"metallic oxides" };
+}
+
+/* 3) Non-metallic oxides: X^(+k) + O(-2) => Xx Oy  (choose positive oxidation of nonmetal) */
+function gen_nonmetallic_oxide(){
+  const X = NONMETALS_POS[Math.floor(Math.random()*NONMETALS_POS.length)];
+  // choose a positive oxidation state (>0)
+  const poss = ELEMENTS[X].ox.filter(x=>x>0);
+  const ox = poss[Math.floor(Math.random()*poss.length)];
+  const [mx, mo] = smallestRatio(ox, -2);
+  const formula = formatFormula([[X,mx],["O",mo]]);
+  const name = `${ELEMENT_NAME[X].toLowerCase()} oxide`;
+  return { formula, name, category:"non-metallic oxides" };
+}
+
+/* 4) Non-metallic hydrides: choose negative oxidation state (e.g., N:-3 -> NH3, C:-4 -> CH4) */
+function gen_nonmetallic_hydride(){
+  const X = NONMETALS_NEG[Math.floor(Math.random()*NONMETALS_NEG.length)];
+  const negs = ELEMENTS[X].ox.filter(x=>x<0);
+  const ox = negs[Math.floor(Math.random()*negs.length)]; // negative number
+  const hcount = Math.abs(ox); // H count typically equals -ox of central
+  const formula = formatFormula([[X,1],["H",hcount]]);
+  // name common: methane, ammonia, phosphine, hydrogen sulfide are special; fallback generic:
+  const special = {"N":"ammonia","C":"methane","P":"phosphine","S":"hydrogen sulfide","Cl":"hydrogen chloride"};
+  const name = (special[X] ? special[X] : `${ELEMENT_NAME[X].toLowerCase()} hydride`);
+  return { formula, name, category:"non-metallic hydrides" };
+}
+
+/* 5) Non-oxygen containing acids (binary acids): H + X(-n) => H_n X */
+function gen_binary_acid(){
+  // pick common halide or S
+  const X = (Math.random()<0.75) ? HALIDES[Math.floor(Math.random()*HALIDES.length)] : "S";
+  // choose negative oxidation from elements table: typically -1 for halides, -2 for S
+  const oxs = ELEMENTS[X].ox.filter(x=>x<0);
+  const ox = (oxs.length ? oxs[Math.floor(Math.random()*oxs.length)] : -1);
+  const hcount = Math.abs(ox);
+  const formula = formatFormula([["H",hcount],[X,1]]);
+  const acidName = (X==="S") ? "hydrosulfuric acid" : `hydro${ACID_ROOT[X] || ELEMENT_NAME[X].toLowerCase()}ic acid`;
+  return { formula, name: acidName, category:"non-oxygen containing acids" };
+}
+
+/* 6) Oxyacids: build H_n X O_m where we choose a positive oxidation state for X and find minimal m producing n>0
+   Solve n + ox - 2m = 0 => n = 2m - ox, find smallest integer m>=1 with n>0.
+*/
+function gen_oxyacid(){
+  // choose X from common nonmetals that form oxyacids
+  const candidates = ["N","S","P","C","Cl","Br","I"];
+  const X = candidates[Math.floor(Math.random()*candidates.length)];
+  // choose positive oxidation state
+  const poss = ELEMENTS[X].ox.filter(x=>x>0);
+  const ox = poss[Math.floor(Math.random()*poss.length)];
+  // find minimal m such that n=2m-ox > 0
+  let m = 1;
+  let n = 2*m - ox;
+  while(n <= 0 && m < 6){ m++; n = 2*m - ox; }
+  if(n<=0){ m = 3; n = 2*m - ox; } // fallback
+  // reduce ratio n:X: m to smallest integers (it's already integers)
+  const formula = formatFormula([["H", n], [X,1], ["O", m]]);
+  // name heuristics - handle common acids
+  const common = {
+    "N": {3:"nitrous acid", 5:"nitric acid"},
+    "S": {4:"sulfurous acid", 6:"sulfuric acid"},
+    "P": {3:"phosphorous acid",5:"phosphoric acid"},
+    "C": {2:"carbonous acid", 4:"carbonic acid"},
+    "Cl": {1:"hypochlorous acid",3:"chlorous acid",5:"chloric acid",7:"perchloric acid"},
+    "Br": {1:"hypobromous acid",3:"bromous acid",5:"bromic acid",7:"perbromic acid"},
+    "I": {1:"hypoiodous acid",5:"iodic acid",7:"periodic acid"}
+  };
+  let name = common[X] && common[X][ox] ? common[X][ox] : `${ELEMENT_NAME[X].toLowerCase()} oxyacid`;
+  return { formula, name, category:"oxyacids", meta:{center:X, oxstate:ox, Hcount:n, Ocount:m} };
+}
+
+/* 7) Hydroxides: M(OH)_z where z = metal oxidation */
+function gen_hydroxide(){
+  const metal = METALS[Math.floor(Math.random()*METALS.length)];
+  const ox = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)];
+  const z = ox; // M^(+z) needs z OH(-1)
+  const formula = formatFormula([[metal,1],["O",z],["H",z === 1 ? 1 : z]]); // M O_z H_z => M(OH)_z but simple form
+  const name = (ELEMENTS[metal].ox.length>1) ? `${ELEMENT_NAME[metal]}(${toRoman(ox)}) hydroxide` : `${ELEMENT_NAME[metal]} hydroxide`;
+  return { formula, name: name.toLowerCase(), category:"hydroxides" };
+}
+
+/* 8) Binary salts: M^(+a) + X^(-b) => combine to neutral */
+function gen_binary_salt(){
+  const metal = METALS[Math.floor(Math.random()*METALS.length)];
+  const nonmetalCandidates = ["Cl","Br","I","S","O","N","P"];
+  const X = nonmetalCandidates[Math.floor(Math.random()*nonmetalCandidates.length)];
+  const cationOx = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)];
+  // pick anionic charge typical for X
+  const typical = { "Cl": -1, "Br": -1, "I": -1, "S": -2, "O": -2, "N": -3, "P": -3 };
+  const anionCharge = typical[X] || -1;
+  const [multM, multX] = smallestRatio(cationOx, anionCharge);
+  const formula = formatFormula([[metal,multM],[X,multX]]);
+  // name: metal name + anion name (sulfide, oxide, chloride...)
+  const anionNameMap = {"Cl":"chloride","Br":"bromide","I":"iodide","S":"sulfide","O":"oxide","N":"nitride","P":"phosphide"};
+  const metalName = (ELEMENTS[metal].ox.length>1) ? `${ELEMENT_NAME[metal]}(${toRoman(cationOx)})` : ELEMENT_NAME[metal];
+  const name = `${metalName} ${anionNameMap[X]||X}`.toLowerCase();
+  return { formula, name, category:"salts" };
+}
+
+/* 9) Ternary salts: from an oxyacid H_n X O_m create oxyanion (remove H -> XO_m^( -n )) then combine with metal(s) */
+function gen_ternary_salt(){
+  // generate an oxyacid first
+  const acid = gen_oxyacid();
+  const { meta } = acid;
+  // oxyanion = X O_m with charge -n
+  const oxyanion = { center: meta.center, Ocount: meta.Ocount, charge: -meta.Hcount };
+  // pick a metal cation
+  const metal = METALS[Math.floor(Math.random()*METALS.length)];
+  const metOx = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)];
+  // combine to neutralize: metal charge metOx (positive) vs oxyanion charge (negative)
+  const [multM, multA] = smallestRatio(metOx, oxyanion.charge);
+  // formula: metal_mult + (center O_m)_mult
+  const formulaParts = [[metal,multM],[oxyanion.center, multA*1],[ "O", oxyanion.Ocount * multA ]];
+  const formula = formatFormula(formulaParts);
+  // naming: metal + (anion name) -> e.g. sodium nitrate
+  const anionName = oxyanionName(oxyanion.center, oxyanion.Ocount, Math.abs(oxChargeFromMeta(meta)));
+  const metalName = ELEMENT_NAME[metal];
+  const name = `${metalName} ${anionName}`.toLowerCase();
+  return { formula, name, category:"ternary salts" };
+}
+
+/* helper to compute charge from meta */
+function oxChargeFromMeta(meta){ // meta from gen_oxyacid: {center, oxstate, Hcount, Ocount}
+  // charge on oxyanion when remove H: negative of Hcount
+  return -meta.Hcount;
+}
+function oxyanionName(center, Ocount, chargeMagnitude){
+  // simple heuristics: use 'ate' for higher oxidation states, 'ite' for lower
+  // heuristics: for common oxyanions
+  const centerUpper = center;
+  const root = (ACID_ROOT[centerUpper] || centerUpper.toLowerCase());
+  // choose suffix by Ocount vs common patterns
+  // e.g. NO3^- (nitrate), NO2^- (nitrite), SO4^2- (sulfate), SO3^2- (sulfite), PO4^3- (phosphate)
+  let suffix = "ate";
+  if(Ocount <= 2) suffix = "ite";
+  if(Ocount >= 4) suffix = "ate";
+  // special mapping overrides
+  const map = {
+    "N": {3:"nitrate",2:"nitrite"},
+    "S": {4:"sulfite",3:"sulfite",2:"sulfide",6:"sulfate"},
+    "P": {4:"phosphate",3:"phosphite",2:"phosphite",1:"phosphide",3:"phosphate"},
+    "C": {3:"carbonate",1:"carbonite",2:"carbonate"},
+    "Cl": {3:"chlorite",4:"chlorate",1:"hypochlorite",5:"perchlorate"},
+    "Br": {3:"bromite",4:"bromate"},
+    "I": {3:"iodite",4:"iodate"}
+  };
+  if(map[centerUpper] && map[centerUpper][Ocount]) return map[centerUpper][Ocount];
+  return root + suffix;
+}
+
+/* roman numerals for metal oxidation in names */
+function toRoman(num){
+  const romans = {1:"I",2:"II",3:"III",4:"IV",5:"V",6:"VI",7:"VII",8:"VIII"};
+  return romans[num] || num;
+}
+
+/* ---------- top-level generator: pick enabled category and call respective function ---------- */
+function getEnabledCategories(){
+  return Object.keys(enabledCats).filter(k => enabledCats[k]);
+}
+function randomChoice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+function generateCompound(){
+  const enabled = getEnabledCategories();
+  if(enabled.length === 0) return null;
+  const cat = randomChoice(enabled);
+  switch(cat){
+    case "metallic hydrides": return gen_metallic_hydride();
+    case "metallic oxides": return gen_metallic_oxide();
+    case "non-metallic oxides": return gen_nonmetallic_oxide();
+    case "non-metallic hydrides": return gen_nonmetallic_hydride();
+    case "non-oxygen containing acids": return gen_binary_acid();
+    case "non-oxygen containing acids": return gen_binary_acid();
+    case "non-oxygen acids": return gen_binary_acid();
+    case "oxyacids": return gen_oxyacid();
+    case "hydroxides": return gen_hydroxide();
+    case "salts": return gen_binary_salt();
+    case "ternary salts": return gen_ternary_salt();
+    default: return gen_binary_salt();
+  }
+}
+
+/* ---------- question / answer flow ---------- */
+let current = null;
+let currentDirectionForced = null; 
+const questionEl = document.getElementById("question");
+const answerInput = document.getElementById("answer");
+const feedback = document.getElementById("feedback");
+const directionSelect = document.getElementById("direction");
+const newQBtn = document.getElementById("newQBtn");
+const submitBtn = document.getElementById("submit");
+const hintBtn = document.getElementById("hintBtn");
+const resetStatsBtn = document.getElementById("resetStats");
+
+newQBtn.onclick = newQuestion;
+submitBtn.onclick = submitAnswer;
+hintBtn.onclick = showHint;
+resetStatsBtn.onclick = ()=>{ if(confirm("Reset accuracy history?")) resetStats(); };
+
+function newQuestion(){
+  feedback.textContent = "";
+  answerInput.value = "";
+  answerInput.disabled = false;
+  submitBtn.textContent = "Submit";
+  submitBtn.onclick = submitAnswer;
+  current = generateCompound();
+  if(!current){
+    questionEl.textContent = "No categories enabled — enable at least one.";
+    return;
+  }
+  let dir = directionSelect.value;
+  if(dir==="either"){
+    dir = (Math.random()<0.5) ? "formulaToName" : "nameToFormula";
+    currentDirectionForced = dir;
+  } else {
+    currentDirectionForced = dir;
+  }
+  if(currentDirectionForced === "formulaToName"){
+    questionEl.textContent = `Name the compound: ${current.formula}`;
+  } else {
+    questionEl.textContent = `Give the formula for: ${current.name}`;
+  }
+}
+
+/* --- HINT --- */
+function showHint(){
+  if(!current) return;
+  if(currentDirectionForced === "formulaToName"){
+    feedback.textContent = `Hint: Category — ${current.category}`;
+  } else {
+    const f = current.formula;
+    const first = f.match(/^[A-Z][a-z]?/);
+    const rest = f.slice(first ? first[0].length : 0);
+    const masked = (first? first[0] : "") + "…" + (rest.length ? (" ("+rest.length+" chars)") : "");
+    feedback.textContent = `Hint: formula starts ${masked}`;
+  }
+}
+
+/* --- Normalization helpers --- */
+function normalizeName(s){
+  return s.trim().toLowerCase().replace(/\s+/g," ").replace(/[\u0300-\u036f]/g, "");
+}
+function normalizeForCompare(s){
+  return normalizeName(String(s).replace(/\u00A0/g," ").replace(/\(|\)|,|\./g,"").replace(/-+/g," "));
+}
+
+/* --- Answer checking --- */
+function isCorrect(userRaw){
+  const user = normalizeForCompare(userRaw);
+  const correctFormula = current.formula;
+  const correctName = current.name;
+  const userFormula = userRaw.replace(/\s+/g,"").toUpperCase();
+  if(userFormula === correctFormula.replace(/\s+/g,"").toUpperCase()) return true;
+  if(user === normalizeForCompare(correctName)) return true;
+  return false;
+}
+
+/* --- Submit & Continue logic --- */
+function submitAnswer(){
+  if(!current) return;
+  const userAns = answerInput.value.trim();
+  if(!userAns){ feedback.textContent = "Please enter an answer."; return; }
+
+  const correct = isCorrect(userAns);
+  recordResult(correct);
+
+  if(correct){
+    feedback.style.color = "green";
+    feedback.textContent = "✅ Correct!";
+    setTimeout(()=>newQuestion(), 800);
+  } else {
+    feedback.style.color = "red";
+    feedback.innerHTML = `❌ Incorrect.<br>Correct answer: <b>${
+      currentDirectionForced === "formulaToName" ? current.name : current.formula
+    }</b>`;
+    answerInput.disabled = true;
+    submitBtn.textContent = "Continue";
+    submitBtn.onclick = ()=> {
+      answerInput.disabled = false;
+      newQuestion();
+    };
+  }
+}
+</script>
+</body>
+</html>
