@@ -102,16 +102,17 @@ const ELEMENTS = {
 
 /* categories and which elements are allowed for generation in each */
 const CATEGORY_DEFS = {
-  "metallic hydrides": { label:"Metallic hydrides", kind:"metal" },
-  "metallic oxides": { label:"Metallic oxides", kind:"metal" },
-  "non-metallic oxides": { label:"Non-metallic oxides", kind:"nonmetal_pos" },
-  "non-metallic hydrides": { label:"Non-metallic hydrides", kind:"nonmetal_neg" },
+  "metallic hydrides": { label:"Metallic hydrides", kind:"metallic_hydride" },
+  "metallic oxides": { label:"Metallic oxides", kind:"metallic_oxide" },
+  "non-metallic oxides": { label:"Non-metallic oxides", kind:"nonmetallic_oxide" },
+  "non-metallic hydrides": { label:"Non-metallic hydrides", kind:"nonmetallic_hydride" },
   "non-oxygen acids": { label:"Non-oxygen acids (binary acids)", kind:"binary_acid" },
-  "oxyacids": { label:"Oxyacids", kind:"oxyacid" },
-  "hydroxides": { label:"Hydroxides", kind:"metal" },
-  "salts": { label:"Binary salts (M + X)", kind:"salt" },
-  "ternary salts": { label:"Ternary salts (M + oxyanion)", kind:"ternary" }
+  "oxyacids": { label:"Oxyacids (ternary acids)", kind:"oxyacid" },
+  "hydroxides": { label:"Hydroxides", kind:"hydroxide" },
+  "salts": { label:"Binary salts", kind:"binary_salt" },
+  "ternary salts": { label:"Ternary salts", kind:"ternary_salt" }
 };
+
 
 /* useful lists */
 const METALS = Object.keys(ELEMENTS).filter(s => {
@@ -205,13 +206,18 @@ function smallestRatio(a,b){
 
 /* 1) Metallic hydrides: M + H(-1): M H_z where z = metal oxidation */
 function gen_metallic_hydride(){
-  const metal = METALS[Math.floor(Math.random()*METALS.length)];
-  const ox = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)]; // positive
-  const subs = ox; // number of H to neutralize (H -1 each)
-  const formula = formatFormula([[metal,1],["H",subs]]);
-  const name = `${ELEMENT_NAME[metal].toLowerCase()} hydride`;
-  return { formula, name, category:"metallic hydrides" };
+  const metal = METALS[Math.floor(Math.random() * METALS.length)];
+  const ox = ELEMENTS[metal].ox[Math.floor(Math.random()*ELEMENTS[metal].ox.length)];
+  const subs = ox; // number of H atoms (since H = -1)
+  const formula = formatFormula([[metal, 1], ["H", subs]]);
+
+  // Always show oxidation number for metals with >1 possible oxidation state
+  const metalName = ELEMENT_NAME[metal];
+  const name = (ELEMENTS[metal].ox.length > 1)    ? `${metalName}(${toRoman(ox)}) hydride`    : `${metalName} hydride`;
+
+  return { formula, name: name.toLowerCase(), category: "metallic hydrides" };
 }
+
 
 /* 2) Metallic oxides: M^(+z) + O(-2) => Mx Oy */
 function gen_metallic_oxide(){
@@ -233,8 +239,10 @@ function gen_nonmetallic_oxide(){
   const ox = poss[Math.floor(Math.random()*poss.length)];
   const [mx, mo] = smallestRatio(ox, -2);
   const formula = formatFormula([[X,mx],["O",mo]]);
-  const name = `${ELEMENT_NAME[X].toLowerCase()} oxide`;
-  return { formula, name, category:"non-metallic oxides" };
+  // include oxidation number only if element has multiple positive oxidation states
+  const elementName = ELEMENT_NAME[X];
+  const name = (poss.length>1) ? `${elementName}(${toRoman(ox)}) oxide` : `${elementName} oxide`;
+  return { formula, name: name.toLowerCase(), category:"non-metallic oxides" };
 }
 
 /* 4) Non-metallic hydrides: choose negative oxidation state (e.g., N:-3 -> NH3, C:-4 -> CH4) */
@@ -246,8 +254,14 @@ function gen_nonmetallic_hydride(){
   const formula = formatFormula([[X,1],["H",hcount]]);
   // name common: methane, ammonia, phosphine, hydrogen sulfide are special; fallback generic:
   const special = {"N":"ammonia","C":"methane","P":"phosphine","S":"hydrogen sulfide","Cl":"hydrogen chloride"};
-  const name = (special[X] ? special[X] : `${ELEMENT_NAME[X].toLowerCase()} hydride`);
-  return { formula, name, category:"non-metallic hydrides" };
+  let name;
+  if(special[X]){
+    name = special[X];
+  } else {
+    // include oxidation number only if element has multiple negative oxidation states
+    name = (negs.length>1) ? `${ELEMENT_NAME[X]}(${toRoman(Math.abs(ox))}) hydride` : `${ELEMENT_NAME[X]} hydride`;
+  }
+  return { formula, name: name.toLowerCase(), category:"non-metallic hydrides" };
 }
 
 /* 5) Non-oxygen containing acids (binary acids): H + X(-n) => H_n X */
@@ -385,17 +399,15 @@ function getEnabledCategories(){
 }
 function randomChoice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
-function generateCompound(){
+function generateCompound() {
   const enabled = getEnabledCategories();
-  if(enabled.length === 0) return null;
+  if (enabled.length === 0) return null;
   const cat = randomChoice(enabled);
-  switch(cat){
+  switch (cat) {
     case "metallic hydrides": return gen_metallic_hydride();
     case "metallic oxides": return gen_metallic_oxide();
     case "non-metallic oxides": return gen_nonmetallic_oxide();
     case "non-metallic hydrides": return gen_nonmetallic_hydride();
-    case "non-oxygen containing acids": return gen_binary_acid();
-    case "non-oxygen containing acids": return gen_binary_acid();
     case "non-oxygen acids": return gen_binary_acid();
     case "oxyacids": return gen_oxyacid();
     case "hydroxides": return gen_hydroxide();
@@ -404,6 +416,7 @@ function generateCompound(){
     default: return gen_binary_salt();
   }
 }
+
 
 /* ---------- question / answer flow ---------- */
 let current = null;
